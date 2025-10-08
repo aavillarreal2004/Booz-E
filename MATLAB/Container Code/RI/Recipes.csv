@@ -1,0 +1,9 @@
+id,name,ingredient_1,ingredient_2,ingredient_3,amount_1,amount_2,amount_3,probability
+D-01,Gin and Tonic,I-01,I-06,,45,90,,0.1666666667
+D-02,Martini,I-01,I-02,,120,15,,0.1666666667
+D-03,Gin Sour,I-01,I-07,I-09,60,30,30,0.075
+D-04,Gimlet,I-01,I-08,I-09,60,30,30,0.075
+D-05,Negroni,I-01,I-03,I-04,45,45,45,0.1166666667
+D-06,Whiskey Sour,I-05,I-07,I-09,60,30,30,0.1166666667
+D-07,Old Fashioned,I-05,I-09,I-10,60,15,3,0.1666666667
+D-08,Manhattan,I-03,I-05,I-10,30,60,3,0.1166666667
