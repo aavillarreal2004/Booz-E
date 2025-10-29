@@ -4,6 +4,7 @@ from PyQt6.QtGui import *
 from PyQt6.QtCore import *
 from PyQt6 import *
 from gpiozero import LED
+import os
 
 
 class MyWindow(QMainWindow):
@@ -26,8 +27,23 @@ class MyWindow(QMainWindow):
         self.gui_widget = QWidget()
         self.gui_layout = QVBoxLayout(self.gui_widget)
         self.scroll_area = QScrollArea()
-        self.fun_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.gui_layout.addWidget(self.fun_label)
+        self.scroll_layout = QHBoxLayout()
+        
+        for drink_image_filename in os.listdir("drink_images"):
+            drink_image_path = os.path.join("drink_images", drink_image_filename)
+            drink_button = QPushButton()
+            drink_icon = QIcon(drink_image_path)
+            drink_button.setIcon(drink_icon)
+            drink_button.setIconSize(QSize(400-8, 300-8))
+            drink_button.setFixedSize(QSize(200, 300))
+            self.scroll_layout.addWidget(drink_button)
+        
+        self.scroll_widget = QWidget()
+        self.scroll_widget.setLayout(self.scroll_layout)
+        self.scroll_area.setWidget(self.scroll_widget)
+        
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.gui_layout.addWidget(self.scroll_widget)
         
         self.layout.addWidget(self.gui_widget)
         self.layout.addWidget(self.splash_label)
