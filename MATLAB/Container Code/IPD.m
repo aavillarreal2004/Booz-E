@@ -66,8 +66,8 @@ end
 
 figure;
 bar(ingList, ingVol);
-set(gca, 'YTick', 0:250:4500);
-ylim([0 4500]);
+set(gca, 'YTick', 0:250:4000);
+ylim([0 4000]);
 ylabel("Volume (mL)");
 xlabel("Ingredients")
 title("Volume needed for " + n + " customers");
