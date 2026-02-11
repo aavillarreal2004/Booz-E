@@ -78,12 +78,6 @@ class MyWindow(QMainWindow):
         self.dispensing_layout.addWidget(self.timer_label, alignment=Qt.AlignmentFlag.AlignCenter)
         self.dispensing_layout.addStretch()
         
-        motor_pin = 16
-        liquid_sensor_pin = 26
-        
-        self.motor_control = gpiozero.DigitalOutputDevice(motor_pin)
-        self.liquid_sensor = gpiozero.DigitalInputDevice(liquid_sensor_pin)
-        
         self.layout.addWidget(self.gui_widget)
         self.layout.addWidget(self.splash_label)
         self.layout.addWidget(self.dispensing_widget)
@@ -132,17 +126,14 @@ class MyWindow(QMainWindow):
         
     def start_timer(self):
         self.time_left = 10
-        self.motor_control.on()
         self.timer.start()
         
     def update_countdown(self):
-        print(self.liquid_sensor.is_active)
         if self.time_left > 0:
             self.time_left -= 1
             self.timer_label.setText(f"{self.time_left+1}")
         else:
             self.timer.stop()
-            self.motor_control.off()
             self.timer_label.setText("Done!")
             QTimer.singleShot(1300, self.switch_to_main_gui)
             
