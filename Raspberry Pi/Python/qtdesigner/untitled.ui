@@ -39,13 +39,13 @@
     <number>0</number>
    </property>
    <widget class="QWidget" name="page">
-    <widget class="QWidget" name="">
+    <widget class="QWidget" name="layoutWidget">
      <property name="geometry">
       <rect>
        <x>0</x>
        <y>0</y>
-       <width>1021</width>
-       <height>601</height>
+       <width>716</width>
+       <height>375</height>
       </rect>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout">
@@ -195,6 +195,9 @@
         </item>
         <item>
          <widget class="QPushButton" name="pushButton_26">
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
           <property name="minimumSize">
            <size>
             <width>260</width>
