@@ -66,6 +66,7 @@ class MyWindow(QMainWindow):
             self.drink_selection_buttons.append(drink_selection_button)
 
         self.dispense_button = QPushButton("Dispense")
+        self.dispense_button.clicked.connect(self.dispense_regime)
         self.dispense_button.setFixedSize(200, 60)
         self.dispense_button_layout.addItem(QSpacerItem(0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
         self.dispense_button_layout.addWidget(self.dispense_button)
@@ -95,40 +96,26 @@ class MyWindow(QMainWindow):
             drink_image_path = os.path.join("drink_images", drink + ".jpeg")
             drink_button = QPushButton()
             drink_button.setStyleSheet("border: 0px solid #ff3eb5;")
-            drink_button.clicked.connect(lambda checked, i=drink: self.select_drink(i))
+            drink_button.clicked.connect(lambda checked, drink_id=drink: self.select_drink(drink_id))
             drink_icon = QIcon(drink_image_path)
             drink_button.setIcon(drink_icon)
             drink_button.setIconSize(QSize(500 - 20, 300 - 20))
             drink_button.setFixedSize(QSize(200, 300))
-            self.scroll_layout.addWidget(drink_button, index // 4, index % 4)
+            self.scroll_layout.addWidget(drink_button, (index // 4) + 1, (index % 4))
             self.drink_dict[drink].append(drink_button)
             self.drink_dict[drink].append(0)
-        #
-        # self.dispense_button = QPushButton("Dispense")
-        # self.dispense_button.setStyleSheet("font-size: 30px;")
-        # self.dispense_button.setFixedSize(QSize(200, 80))
-        # self.dispense_button.clicked.connect(lambda: self.switch_to_dispensing_gui(self.selected_drink))
-        # self.scroll_widget.setLayout(self.scroll_layout)
-        # self.scroll_area.setWidget(self.scroll_widget)
-        # self.gui_layout.addStretch()
-        # self.gui_layout.addWidget(self.scroll_area)
-        # self.gui_layout.addWidget(self.dispense_button, alignment=Qt.AlignmentFlag.AlignCenter)
-        # self.gui_layout.addStretch()
-        #
-        # self.dispensing_widget = QWidget()
-        # self.dispensing_layout = QVBoxLayout(self.dispensing_widget)
-        # self.dispense_label = QLabel()
-        # self.dispense_label.setStyleSheet("font-size: 36px")
-        # self.timer = QTimer()
-        # self.timer.setInterval(1000)
-        # self.timer.timeout.connect(self.update_countdown)
-        # self.timer_label = QLabel()
-        # self.timer_label.setStyleSheet("font-size: 36px")
-        #
-        # self.dispensing_layout.addStretch()
-        # self.dispensing_layout.addWidget(self.dispense_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        # self.dispensing_layout.addWidget(self.timer_label, alignment=Qt.AlignmentFlag.AlignCenter)
-        # self.dispensing_layout.addStretch()
+        index += 1
+        self.cancel_button = QPushButton(text="Cancel")
+        self.cancel_button.clicked.connect(lambda: self.switch_to_page_index(1))
+        self.scroll_layout.addWidget(self.cancel_button, 0, 3)
+
+        # 0 No drink selected
+        # 1 A drink selected but not dispensing
+        # 2 A drink currently dispensing
+        # 3 Drink is done
+        self.dispensing_status_dict = {}
+        for i in range(4):
+            self.dispensing_status_dict[i] = [0, ""]
 
         self.layout.addWidget(self.splash_label)
         self.layout.addWidget(self.main_drink_screen)
@@ -163,37 +150,16 @@ class MyWindow(QMainWindow):
         self.switch_to_page_index(2)
 
     def select_drink(self, drink_id):
-        # Reset all buttons to unhighlighted
-        for drink in self.drink_dict:
-            drink_button = self.drink_dict[drink][2]
-            drink_button.setStyleSheet("border: 0px solid #ff3eb5;")
-
-        # Highlight button that user just pressed
-        self.selected_drink = drink_id
-        selected_drink_button = self.drink_dict[self.selected_drink][2]
-        selected_drink_button.setStyleSheet("border: 20px solid #ff3eb5;")
         self.drink_selection_buttons[self.drink_slot_number].setIcon(
             QIcon(os.path.join("drink_images", drink_id + ".jpeg")))
+        self.dispensing_status_dict[self.drink_slot_number] = [1, drink_id]
         self.switch_to_page_index(1)
 
-    def switch_to_dispensing_gui(self, drink_id):
-        self.switch_to_page_index(2)
-        self.dispense_label.setText(f"Now dispensing your {self.drink_dict[drink_id][0]}")
-        self.timer_label.setText("Starting...")
-        self.start_timer()
-
-    def start_timer(self):
-        self.time_left = 10
-        self.timer.start()
-
-    def update_countdown(self):
-        if self.time_left > 0:
-            self.time_left -= 1
-            self.timer_label.setText(f"{self.time_left + 1}")
-        else:
-            self.timer.stop()
-            self.timer_label.setText("Done!")
-            QTimer.singleShot(1300, lambda page_index=1: self.switch_to_page_index(page_index))
+    def dispense_regime(self):
+        for drink_slot_number in self.dispensing_status_dict:
+            if self.dispensing_status_dict[drink_slot_number][0] == 1:
+                self.drink_selection_buttons[drink_slot_number].setEnabled(False)
+                pass
 
 
 if __name__ == "__main__":
