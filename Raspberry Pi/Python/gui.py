@@ -280,6 +280,9 @@ class MainWindow(QMainWindow):
                 self.main_screen.set_slot_enabled(slot, True)
                 self.slot_status[slot] = (DispenseStatus.NO_DRINK, None)
 
+    def drink_logic(self):
+
+
 
 # ===== Application Entry Point =====
 if __name__ == "__main__":
