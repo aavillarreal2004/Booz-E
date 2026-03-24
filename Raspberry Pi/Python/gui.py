@@ -3,51 +3,61 @@ import os
 import sys
 from enum import Enum, auto
 from pathlib import Path
+import gpiozero
 
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 from PyQt6.QtWidgets import *
 from qt_material import apply_stylesheet
 
+os.environ["GPIOZERO_PIN_FACTORY"] = "mock"
+# os.chdir("/boot/firmware/pc_upload")
 
 # ===== Constants =====
-SPLASH_DURATION = 1300          # ms before fade starts
-FADE_DURATION = 900             # ms for fade animation
-SWITCH_DELAY = 2500              # ms after splash to switch screen
+
+# Pins for sending a signal to dispense a 100% red mix, a 50-50 mix or 25-75% red-blue mix
+PIN_100_0 = 0
+PIN_50_50 = 5
+PIN_25_75 = 6
+PIN_DRINK_FEEDBACK = 21
+gpio_100_0 = gpiozero.OutputDevice(PIN_100_0)
+gpio_50_50 = gpiozero.OutputDevice(PIN_50_50)
+gpio_25_75 = gpiozero.OutputDevice(PIN_25_75)
+gpio_DRINK_FEEDBACK = gpiozero.InputDevice(PIN_DRINK_FEEDBACK)
+
+TEST_DISPENSE_DURATION = 4000
+SPLASH_DURATION = 1300
+FADE_DURATION = 900
+SWITCH_DELAY = 2500
 BUTTON_SIZE = QSize(200, 300)
 ICON_SIZE = QSize(160, 160)
 DISPENSE_BUTTON_SIZE = QSize(200, 60)
 MAX_COLS = 4
-SCROLL_ICON_SIZE = QSize(480, 280)   # drink selection icons
+SCROLL_ICON_SIZE = QSize(480, 280)
+DISPENSE_TIMEOUT_MS = 60000      # 60 seconds max to wait for feedback
+FEEDBACK_POLL_INTERVAL_MS = 100  # check pin every 100 ms
 
 
 # ===== Enums =====
 class DispenseStatus(Enum):
-    """Status of each drink slot."""
-    NO_DRINK = auto()           # 0
-    SELECTED = auto()            # 1
-    DISPENSING = auto()          # 2
-    DONE = auto()                 # 3
+    NO_DRINK = auto()
+    SELECTED = auto()
+    DISPENSING = auto()
+    DONE = auto()
 
 
 # ===== Data Class =====
 class DrinkData:
-    """Holds information for one drink."""
     def __init__(self, name, description, ingredient_list):
         self.name = name
         self.description = description
-        self.ingredients = ingredient_list   # list of ints
-        self.button = None                    # will be set later
+        self.ingredients = ingredient_list
+        self.button = None
         self.selection_count = 0
 
 
 # ===== CSV Loader =====
 def load_drinks_from_csv(filename):
-    """
-    Reads a CSV file with drink data.
-    Expected columns: drink_name, description, space-separated ingredient IDs.
-    Returns a dict mapping drink name -> DrinkData object.
-    """
     drinks = {}
     with open(filename, 'r', newline='', encoding='utf-8') as csvfile:
         reader = csv.reader(csvfile)
@@ -64,7 +74,6 @@ def load_drinks_from_csv(filename):
 
 # ===== Splash Screen Widget =====
 class SplashScreen(QLabel):
-    """Full‑screen splash with fade‑out animation."""
     def __init__(self, image_path, size=300):
         super().__init__()
         self.opacity_effect = None
@@ -89,8 +98,7 @@ class SplashScreen(QLabel):
 
 # ===== Main Screen (4 slots + Dispense) =====
 class MainDrinkScreen(QWidget):
-    """Screen showing four drink slots and a dispense button."""
-    slot_clicked = pyqtSignal(int)          # emitted when a slot button is tapped
+    slot_clicked = pyqtSignal(int)
     dispense_clicked = pyqtSignal()
 
     def __init__(self):
@@ -101,58 +109,55 @@ class MainDrinkScreen(QWidget):
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
 
-        # Top spacer
         main_layout.addSpacerItem(QSpacerItem(0, 100, QSizePolicy.Policy.Minimum,
                                               QSizePolicy.Policy.Expanding))
 
-        # Four buttons layout
         button_row = QHBoxLayout()
         for i in range(4):
-            btn = QPushButton()
-            btn.setFixedSize(BUTTON_SIZE)
-            btn.setIconSize(ICON_SIZE)
-            btn.clicked.connect(lambda checked, idx=i: self.slot_clicked.emit(idx))
-            # Default inactive icon
-            btn.setIcon(QIcon("ui_images/logo_transparent_gray.png"))
-            button_row.addWidget(btn)
-            self.slot_buttons.append(btn)
+            button = QPushButton()
+            button.setFixedSize(BUTTON_SIZE)
+            button.setIconSize(ICON_SIZE)
+            button.clicked.connect(lambda checked, idx=i: self.slot_clicked.emit(idx))
+            button.setIcon(QIcon("ui_images/logo_transparent_gray.png"))
+            button_row.addWidget(button)
+            self.slot_buttons.append(button)
         main_layout.addLayout(button_row)
 
-        # Dispense button (centered)
         dispense_row = QHBoxLayout()
         dispense_row.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Policy.Expanding,
                                                QSizePolicy.Policy.Minimum))
-        dispense_btn = QPushButton("Dispense")
-        dispense_btn.setFixedSize(DISPENSE_BUTTON_SIZE)
-        dispense_btn.clicked.connect(self.dispense_clicked.emit)
-        dispense_row.addWidget(dispense_btn)
+        self.dispense_btn = QPushButton("Dispense")
+        self.dispense_btn.setFixedSize(DISPENSE_BUTTON_SIZE)
+        self.dispense_btn.clicked.connect(self.dispense_clicked.emit)
+        dispense_row.addWidget(self.dispense_btn)
         dispense_row.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Policy.Expanding,
                                                QSizePolicy.Policy.Minimum))
         main_layout.addLayout(dispense_row)
 
-        # Bottom spacer
         main_layout.addSpacerItem(QSpacerItem(0, 100, QSizePolicy.Policy.Minimum,
                                               QSizePolicy.Policy.Expanding))
 
     def set_slot_icon(self, slot_index, icon_path):
-        """Change the icon of a slot button."""
         self.slot_buttons[slot_index].setIcon(QIcon(icon_path))
 
     def set_slot_enabled(self, slot_index, enabled):
-        """Enable or disable a slot button."""
         self.slot_buttons[slot_index].setEnabled(enabled)
+
+    def set_dispense_enabled(self, enabled):
+        self.dispense_btn.setEnabled(enabled)
 
 
 # ===== Drink Selection Screen (scrollable grid) =====
 class DrinkSelectionScreen(QWidget):
-    """Scrollable grid of all available drinks."""
-    drink_selected = pyqtSignal(str)        # emits drink name
+    drink_selected = pyqtSignal(str)
     cancel_clicked = pyqtSignal()
+    deselect_clicked = pyqtSignal()
 
-    def __init__(self, drinks_dict, images_folder):
+    def __init__(self, drinks_dict, drink_images_folder, ui_images_folder):
         super().__init__()
         self.drinks = drinks_dict
-        self.images_folder = Path(images_folder)
+        self.drink_images_folder_path = Path(drink_images_folder)
+        self.ui_images_folder_path = Path(ui_images_folder)
         self._setup_ui()
 
     def _setup_ui(self):
@@ -165,33 +170,32 @@ class DrinkSelectionScreen(QWidget):
         QScroller.grabGesture(self.scroll.viewport(),
                               QScroller.ScrollerGestureType.LeftMouseButtonGesture)
 
-        # Container for the grid inside the scroll area
         container = QWidget()
         grid = QGridLayout(container)
         grid.setSpacing(10)
 
-        # Cancel button (top right)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.cancel_clicked.emit)
-        grid.addWidget(cancel_btn, 0, MAX_COLS - 1)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.cancel_clicked.emit)
+        grid.addWidget(cancel_button, 0, MAX_COLS - 1)
 
-        # Drink buttons
-        for idx, (name, drink_data) in enumerate(self.drinks.items()):
-            btn = QPushButton()
-            btn.setFixedSize(BUTTON_SIZE)
-            btn.setIconSize(SCROLL_ICON_SIZE)
-            btn.setStyleSheet("border: 0px solid #ff3eb5;")   # no border
-            btn.clicked.connect(lambda checked, n=name: self.drink_selected.emit(n))
+        deselect_button = QPushButton("Deselect")
+        deselect_button.clicked.connect(self.deselect_clicked.emit)
+        grid.addWidget(deselect_button, 0, MAX_COLS - 2)
 
-            # Load image (fallback to placeholder if missing)
-            image_path = self.images_folder / f"{name}.jpeg"
-            if image_path.exists():
-                btn.setIcon(QIcon(str(image_path)))
-            else:
-                btn.setIcon(QIcon("ui_images/logo_transparent_gray.png"))
+        for idx, (drink_name, drink_data) in enumerate(self.drinks.items()):
+            button = QPushButton()
+            button.setFixedSize(BUTTON_SIZE)
+            button.setIconSize(SCROLL_ICON_SIZE)
+            button.setStyleSheet("border: 0px solid #ff3eb5;")
+            button.clicked.connect(lambda checked, n=drink_name: self.drink_selected.emit(n))
 
-            grid.addWidget(btn, (idx // MAX_COLS) + 1, idx % MAX_COLS)
-            drink_data.button = btn   # store reference for later use
+            image_path = self.drink_images_folder_path / f"{drink_name}.jpeg"
+            if not image_path.exists():
+                image_path = self.ui_images_folder_path / "unknown.png"
+            button.setIcon(QIcon(str(image_path)))
+
+            grid.addWidget(button, (idx // MAX_COLS) + 1, idx % MAX_COLS)
+            drink_data.button = button
 
         self.scroll.setWidget(container)
         layout.addWidget(self.scroll)
@@ -203,39 +207,40 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
 
-        # Load drink data
         self.drinks = load_drinks_from_csv("drinks.csv")
-
-        # Status for the four slots: (status, drink_name)
         self.slot_status = {i: (DispenseStatus.NO_DRINK, None) for i in range(4)}
-        self.current_slot = 0   # which slot is being configured
+        self.current_slot = 0
 
-        # Stacked layout
+        # Feedback monitoring
+        self.dispense_timer = QTimer()
+        self.dispense_timer.timeout.connect(self._check_feedback)
+        self.dispense_timeout_timer = QTimer()
+        self.dispense_timeout_timer.setSingleShot(True)
+        self.dispense_timeout_timer.timeout.connect(self._on_dispense_timeout)
+        self.current_dispensing_slot = -1   # -1 means none
+        self.current_dispensing_drink = None
+
         self.stacked = QStackedLayout()
         self._create_pages()
         self._setup_central_widget()
-
-        # Start splash timer
         self._start_splash()
 
     def _create_pages(self):
-        # Page 0: splash
         self.splash = SplashScreen("logo_pink.png", 300)
         self.stacked.addWidget(self.splash)
 
-        # Page 1: main drink screen
         self.main_screen = MainDrinkScreen()
         self.main_screen.slot_clicked.connect(self.on_slot_clicked)
         self.main_screen.dispense_clicked.connect(self.on_dispense_clicked)
         self.stacked.addWidget(self.main_screen)
 
-        # Page 2: drink selection screen
-        self.selection_screen = DrinkSelectionScreen(self.drinks, "drink_images")
+        self.selection_screen = DrinkSelectionScreen(self.drinks, "drink_images", "ui_images")
         self.selection_screen.drink_selected.connect(self.on_drink_selected)
         self.selection_screen.cancel_clicked.connect(lambda: self.stacked.setCurrentIndex(1))
+        self.selection_screen.deselect_clicked.connect(self.on_deselect_clicked)
         self.stacked.addWidget(self.selection_screen)
 
-        self.stacked.setCurrentIndex(0)   # start with splash
+        self.stacked.setCurrentIndex(0)
 
     def _setup_central_widget(self):
         central = QWidget()
@@ -249,49 +254,121 @@ class MainWindow(QMainWindow):
     def _fade_splash(self):
         self.splash.fade_out(FADE_DURATION)
 
-    # === Slots ===
     def on_slot_clicked(self, slot_index):
-        """User tapped one of the four main screen slots."""
         self.current_slot = slot_index
-        self.stacked.setCurrentIndex(2)   # go to drink selection
+        self.stacked.setCurrentIndex(2)
 
     def on_drink_selected(self, drink_name):
-        """User selected a drink from the scrollable grid."""
-        # Update slot button icon
-        image_path = f"drink_images/{drink_name}.jpeg"
-        self.main_screen.set_slot_icon(self.current_slot, image_path)
-
-        # Update status
+        drink_images_folder_path = Path("drink_images")
+        image_path = drink_images_folder_path / f"{drink_name}.jpeg"
+        self.main_screen.set_slot_icon(self.current_slot, str(image_path))
         self.slot_status[self.current_slot] = (DispenseStatus.SELECTED, drink_name)
-
-        # Go back to main screen
         self.stacked.setCurrentIndex(1)
 
     def on_dispense_clicked(self):
-        """User pressed the dispense button."""
+        # Prevent starting a new dispense while one is already in progress
+        if self.current_dispensing_slot != -1:
+            return
+
+        # Find the first selected slot
         for slot, (status, drink_name) in self.slot_status.items():
             if status == DispenseStatus.SELECTED:
-                # Disable the slot that is about to dispense
-                self.main_screen.set_slot_enabled(slot, False)
-                self.slot_status[slot] = (DispenseStatus.DISPENSING, drink_name)
-                self.drinks[drink_name].ingredients
-            else:
-                # Re‑enable any slots that are not selected (original logic)
-                self.main_screen.set_slot_enabled(slot, True)
-                self.slot_status[slot] = (DispenseStatus.NO_DRINK, None)
+                self.current_dispensing_slot = slot
+                self.current_dispensing_drink = drink_name
+                break
+
+        if self.current_dispensing_slot == -1:
+            return   # nothing to dispense
+
+        slot = self.current_dispensing_slot
+        drink_name = self.current_dispensing_drink
+
+        # Disable the slot button
+        self.main_screen.set_slot_enabled(slot, False)
+        self.main_screen.set_dispense_enabled(False)
+
+        # Update status
+        self.slot_status[slot] = (DispenseStatus.DISPENSING, drink_name)
+
+        # Activate the appropriate output pin
+        if drink_name == "test_100_0":
+            gpio_100_0.on()
+        elif drink_name == "test_50_50":
+            gpio_50_50.on()
+        elif drink_name == "test_25_75":
+            gpio_25_75.on()
+        elif drink_name == "martini":
+            gpio_100_0.on()
+            gpio_50_50.on()
+            gpio_25_75.on()
+        # If the drink name is not one of these, you might want to handle it (maybe turn on nothing or all)
+        # For now we ignore others
+
+        # Start polling the feedback pin
+        self.dispense_timer.start(FEEDBACK_POLL_INTERVAL_MS)
+        self.dispense_timeout_timer.start(DISPENSE_TIMEOUT_MS)
+
+    def _check_feedback(self):
+        """Called periodically to see if the drink has been dispensed."""
+        if gpio_DRINK_FEEDBACK.is_active:
+            self._finish_dispensing(success=True)
+
+    def _on_dispense_timeout(self):
+        """Called if feedback is not received within the timeout."""
+        self._finish_dispensing(success=False)
+
+    def _finish_dispensing(self, success):
+        """Clean up after dispensing is done (success or timeout)."""
+        # Stop timers
+        self.dispense_timer.stop()
+        self.dispense_timeout_timer.stop()
+
+        if self.current_dispensing_slot == -1:
+            return
+
+        slot = self.current_dispensing_slot
+        drink_name = self.current_dispensing_drink
+
+        # Turn off all output pins (just in case)
+        gpio_100_0.off()
+        gpio_50_50.off()
+        gpio_25_75.off()
+
+        # Re-enable the slot button and clear its selection
+        self.main_screen.set_slot_enabled(slot, True)
+        self.main_screen.set_dispense_enabled(True)
+
+        # Reset status
+        self.slot_status[slot] = (DispenseStatus.NO_DRINK, None)
+        # Reset icon to default
+        self.main_screen.set_slot_icon(slot, "ui_images/logo_transparent_gray.png")
+
+        # Clear current dispensing info
+        self.current_dispensing_slot = -1
+        self.current_dispensing_drink = None
+
+        # Optionally, you could show a message box if not success
+        if not success:
+            QMessageBox.warning(self, "Dispense Timeout",
+                                f"Dispense for {drink_name} timed out.\nPlease check the hardware.")
+
+    def on_deselect_clicked(self):
+        image_path = "ui_images/logo_transparent_gray.png"
+        self.slot_status[self.current_slot] = (DispenseStatus.NO_DRINK, None)
+        self.main_screen.set_slot_icon(self.current_slot, image_path)
+        self.stacked.setCurrentIndex(1)
 
 
 # ===== Application Entry Point =====
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    # Apply custom theme if available
     theme_file = "booze-theme.xml"
     if os.path.exists(theme_file):
         apply_stylesheet(app, theme=theme_file)
 
     window = MainWindow()
     window.show()
-    # window.showFullScreen()   # uncomment for fullscreen on target device
+    # window.showFullScreen()
 
     sys.exit(app.exec())
