@@ -2,7 +2,7 @@
 
 // HX711 circuit wiring
 const int LOADCELL_DOUT_PIN = 7;
-const int LOADCELL_SCK_PIN = 11;
+const int LOADCELL_SCK_PIN = 9;
 
 HX711 scale;
 

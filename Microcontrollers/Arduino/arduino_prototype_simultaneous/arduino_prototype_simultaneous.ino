@@ -23,7 +23,7 @@ const int LOADCELL_DOUT_PIN = 7;
 const int LOADCELL_SCK_PIN = 11;
 
 HX711 scale;
-Calibration = 56755 / 157.9
+float calibration_number = 56755 / 157.9;
 // 157.9 is calibration object weight, 56755 was output
 
 void setup() {
@@ -38,11 +38,13 @@ void setup() {
   pinMode(Output, OUTPUT);
 
   // HX711 Scale reading
-  Serial.begin(57600);
+  Serial.begin(38400);
   scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
 }
 
 void loop() {
+  delay(100);
+
   // put your main code here, to run repeatedly:
   Red = digitalRead(Input1);
   Purple = digitalRead(Input2);
@@ -112,4 +114,8 @@ void loop() {
     delay(500);
     digitalWrite(Output, LOW);
   }
+
+  // Future load cell code
+  //
+  //
 }
