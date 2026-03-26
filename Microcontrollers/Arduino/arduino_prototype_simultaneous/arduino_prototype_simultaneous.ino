@@ -34,7 +34,7 @@ void loop() {
     digitalWrite(Sol2, HIGH);
     digitalWrite(motorPin1, HIGH);
     digitalWrite(motorPin2, HIGH);
-    delay(15000);
+    delay(6200);
     digitalWrite(Sol1, LOW);
     digitalWrite(Sol2, LOW);
     digitalWrite(motorPin1, LOW);
