@@ -1,3 +1,4 @@
+// Setting all peripheral pins
 const int motorPin1 = 2;
 const int Sol1 = 3;
 const int motorPin2 = 5;
@@ -5,14 +6,28 @@ const int Sol2 = 6;
 const int Input1 = 10;
 const int Input2 = 11;
 const int Input3 = 12;
-int read = 0;
+
+// Data pins for receiving drink information
 int Red = 0;
 int Mix = 0;
 int Purple = 0;
+
+// Output pin for when drink is done
 const int Output = 8;
 
+// Calibrating the load cell
+#include "HX711.h"
+
+// HX711 circuit wiring
+const int LOADCELL_DOUT_PIN = 7;
+const int LOADCELL_SCK_PIN = 11;
+
+HX711 scale;
+Calibration = 56755 / 157.9
+// 157.9 is calibration object weight, 56755 was output
+
 void setup() {
-  // put your setup code here, to run once:
+  // Configuring all inputs and outputs
   pinMode(motorPin1, OUTPUT);
   pinMode(motorPin2, OUTPUT);
   pinMode(Sol1, OUTPUT);
@@ -21,6 +36,10 @@ void setup() {
   pinMode(Input2, INPUT);
   pinMode(Input3, INPUT);
   pinMode(Output, OUTPUT);
+
+  // HX711 Scale reading
+  Serial.begin(57600);
+  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
 }
 
 void loop() {
