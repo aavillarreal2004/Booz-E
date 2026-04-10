@@ -15,15 +15,14 @@ os.environ["GPIOZERO_PIN_FACTORY"] = "mock"
 
 # ===== Constants =====
 
-# Pins for sending a signal to dispense a 100% red mix, a 50-50 mix or 25-75% red-blue mix
-PIN_100_0 = 0
-PIN_50_50 = 5
-PIN_25_75 = 6
-PIN_DRINK_FEEDBACK = 21
-gpio_100_0 = gpiozero.OutputDevice(PIN_100_0)
-gpio_50_50 = gpiozero.OutputDevice(PIN_50_50)
-gpio_25_75 = gpiozero.OutputDevice(PIN_25_75)
-gpio_DRINK_FEEDBACK = gpiozero.InputDevice(PIN_DRINK_FEEDBACK)
+# Pins for sending dispense data from Rspberry Pi to Arduino
+DRINK_OUTPUT_PINS = [0, 5, 6, 999, 999]
+gpio_output_pins = []
+for PIN_NUMBER in DRINK_OUTPUT_PINS:
+    gpio_output_pins.append(gpiozero.OutputDevice(PIN_NUMBER))
+
+DRINK_FEEDBACK_PIN = 21
+gpio_drink_feedback = gpiozero.InputDevice(DRINK_FEEDBACK_PIN)
 
 TEST_DISPENSE_DURATION = 4000
 SPLASH_DURATION = 1300
@@ -37,14 +36,12 @@ SCROLL_ICON_SIZE = QSize(480, 280)
 DISPENSE_TIMEOUT_MS = 60000      # 60 seconds max to wait for feedback
 FEEDBACK_POLL_INTERVAL_MS = 100  # check pin every 100 ms
 
-
 # ===== Enums =====
 class DispenseStatus(Enum):
     NO_DRINK = auto()
     SELECTED = auto()
     DISPENSING = auto()
     DONE = auto()
-
 
 # ===== Data Class =====
 class DrinkData:
@@ -54,7 +51,6 @@ class DrinkData:
         self.ingredients = ingredient_list
         self.button = None
         self.selection_count = 0
-
 
 # ===== CSV Loader =====
 def load_drinks_from_csv(filename):
@@ -70,7 +66,6 @@ def load_drinks_from_csv(filename):
             ingredients = [int(x) for x in ingredient_str.split()] if ingredient_str else []
             drinks[name] = DrinkData(name, description, ingredients)
     return drinks
-
 
 # ===== Splash Screen Widget =====
 class SplashScreen(QLabel):
@@ -292,15 +287,15 @@ class MainWindow(QMainWindow):
 
         # Activate the appropriate output pin
         if drink_name == "test_100_0":
-            gpio_100_0.on()
+            gpio_drink_output_1.on()
         elif drink_name == "test_50_50":
-            gpio_50_50.on()
+            gpio_drink_output_2.on()
         elif drink_name == "test_25_75":
-            gpio_25_75.on()
+            gpio_drink_output_3.on()
         elif drink_name == "martini":
-            gpio_100_0.on()
-            gpio_50_50.on()
-            gpio_25_75.on()
+            gpio_drink_output_1.on()
+            gpio_drink_output_2.on()
+            gpio_drink_output_3.on()
         # If the drink name is not one of these, you might want to handle it (maybe turn on nothing or all)
         # For now we ignore others
 
@@ -310,7 +305,7 @@ class MainWindow(QMainWindow):
 
     def _check_feedback(self):
         """Called periodically to see if the drink has been dispensed."""
-        if gpio_DRINK_FEEDBACK.is_active:
+        if gpio_drink_feedback.is_active:
             self._finish_dispensing(success=True)
 
     def _on_dispense_timeout(self):
@@ -330,9 +325,9 @@ class MainWindow(QMainWindow):
         drink_name = self.current_dispensing_drink
 
         # Turn off all output pins (just in case)
-        gpio_100_0.off()
-        gpio_50_50.off()
-        gpio_25_75.off()
+        gpio_drink_output_1.off()
+        gpio_drink_output_2.off()
+        gpio_drink_output_3.off()
 
         # Re-enable the slot button and clear its selection
         self.main_screen.set_slot_enabled(slot, True)
