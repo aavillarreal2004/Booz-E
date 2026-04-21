@@ -3,17 +3,17 @@ const int motorPin1 = 2;
 const int Sol1 = 3;
 const int motorPin2 = 5;
 const int Sol2 = 6;
-const int Input1 = 10;
-const int Input2 = 11;
-const int Input3 = 12;
 
 // Data pins for receiving drink information
-int Red = 0;
-int Mix = 0;
-int Purple = 0;
+const int nozzle_1 = 0;
+const int nozzle_2 = 0;
+const int drink_code_1 = 0;
+const int drink_code_2 = 0;
+const int drink_code_3 = 0;
 
 // Output pin for when drink is done
-const int Output = 8;
+const int output_1 = 0;
+const int output_2 = 0;
 
 // Calibrating the load cell
 #include "HX711.h"

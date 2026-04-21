@@ -15,15 +15,22 @@ os.environ["GPIOZERO_PIN_FACTORY"] = "mock"
 
 # ===== Constants =====
 
-# Pins and gpio for sending dispense data from Rspberry Pi to Arduino
-DRINK_OUTPUT_PINS = [0, 5, 6, 999, 999]
-gpio_output_pins = []
-for PIN_NUMBER in DRINK_OUTPUT_PINS:
-    gpio_output_pins.append(gpiozero.OutputDevice(PIN_NUMBER))
+# Pins and gpio for sending dispense data from Raspberry Pi to Arduino
+# First 3 pins are for drink info, second 2 are for which nozzle
+OUTPUT_STROBE_PIN = 14
+OUTPUT_DATA_PINS = [15, 18, 23, 24, 25]
+DRINK_OUTPUT_PINS = [OUTPUT_STROBE_PIN] + OUTPUT_DATA_PINS
+gpio_output_bus = []
+for pin_number in DRINK_OUTPUT_PINS:
+    gpio_output_bus.append(gpiozero.OutputDevice(pin_number))
 
 # Receives status of dispensation from Arduino
-DRINK_FEEDBACK_PIN = 21
-gpio_drink_feedback = gpiozero.InputDevice(DRINK_FEEDBACK_PIN)
+INPUT_STROBE_PIN = 13
+INPUT_DATA_PINS = [19, 26]
+FEEDBACK_PINS = [INPUT_STROBE_PIN] + INPUT_DATA_PINS
+gpio_input_bus = []
+for PIN_NUMBER in FEEDBACK_PINS:
+    gpio_input_bus.append(gpiozero.InputDevice(PIN_NUMBER))
 
 TEST_DISPENSE_DURATION = 4000
 SPLASH_DURATION = 1300
@@ -46,10 +53,11 @@ class DispenseStatus(Enum):
 
 # ===== Data Class =====
 class DrinkData:
-    def __init__(self, name, description, ingredient_list):
+    def __init__(self, name, description, ingredient_list, index):
         self.name = name
         self.description = description
         self.ingredients = ingredient_list
+        self.index = index
         self.button = None
         self.selection_count = 0
 
@@ -58,15 +66,54 @@ def load_drinks_from_csv(filename):
     drinks = {}
     with open(filename, 'r', newline='', encoding='utf-8') as csvfile:
         reader = csv.reader(csvfile)
-        for row in reader:
+        for index, row in enumerate(reader):
             if not row:
                 continue
             name = row[0].strip()
             description = row[1].strip() if len(row) > 1 else ""
             ingredient_str = row[2].strip() if len(row) > 2 else ""
             ingredients = [int(x) for x in ingredient_str.split()] if ingredient_str else []
-            drinks[name] = DrinkData(name, description, ingredients)
+            drinks[name] = DrinkData(name, description, ingredients, index + 1)
     return drinks
+
+
+def set_output_bus(drink_id, nozzle_id):
+    zero_based_drink = drink_id - 1
+
+    # Combine: (drink << 2) | nozzle
+    value = (zero_based_drink << 2) | nozzle_id
+
+    # Write data to output pins
+    for i in range(5):
+        bit = (value >> i) & 1
+        pin_index = i + 1  # data pins start at index 1
+        if bit:
+            gpio_output_bus[pin_index].on()
+        else:
+            gpio_output_bus[pin_index].off()
+
+    # Set strobe HIGH (first pin)
+    gpio_output_bus[0].on()
+
+def clear_output_bus():
+    # Turns off all output pins.
+    for pin in gpio_output_bus:
+        pin.off()
+
+
+def read_feedback_bus():
+    # Check strobe pin (index 0)
+    if not gpio_input_bus[0].is_active:
+        return -1  # no valid data
+
+    # Read 2 data pins (index 1 = Bit1, index 2 = Bit0)
+    value = 0
+    if gpio_input_bus[1].is_active:
+        value += 2
+    if gpio_input_bus[2].is_active:
+        value += 1
+    return value
+
 
 # ===== Splash Screen Widget =====
 class SplashScreen(QLabel):
@@ -216,6 +263,11 @@ class MainWindow(QMainWindow):
         self.current_dispensing_slot = -1   # -1 means none
         self.current_dispensing_drink = None
 
+        self.pending_dispenses = []  # List of (nozzle, drink_name)
+        self.dispense_step_timer = QTimer()
+        self.dispense_step_timer.setSingleShot(True)
+        self.dispense_step_timer.timeout.connect(self._send_next_dispense)
+
         self.stacked = QStackedLayout()
         self._create_pages()
         self._setup_central_widget()
@@ -262,45 +314,39 @@ class MainWindow(QMainWindow):
         self.stacked.setCurrentIndex(1)
 
     def on_dispense_clicked(self):
-        # Prevent starting a new dispense while one is already in progress
         if self.current_dispensing_slot != -1:
+            return  # Already busy
+
+        self.pending_dispenses = []
+        for nozzle, (status, drink_name) in self.slot_status.items():
+            if status == DispenseStatus.SELECTED:
+                self.pending_dispenses.append((nozzle, drink_name))
+                self.slot_status[nozzle] = (DispenseStatus.DISPENSING, drink_name)
+                self.main_screen.set_slot_enabled(nozzle, False)
+
+        if not self.pending_dispenses:
             return
 
-        # Find the first selected slot
-        for slot, (status, drink_name) in self.slot_status.items():
-            if status == DispenseStatus.SELECTED:
-                self.current_dispensing_slot = slot
-                self.current_dispensing_drink = drink_name
-                break
-
-        if self.current_dispensing_slot == -1:
-            return   # nothing to dispense
-
-        slot = self.current_dispensing_slot
-        drink_name = self.current_dispensing_drink
-
-        # Disable the slot button
-        self.main_screen.set_slot_enabled(slot, False)
         self.main_screen.set_dispense_enabled(False)
+        self._send_next_dispense()  # Start the chain
 
-        # Update status
-        self.slot_status[slot] = (DispenseStatus.DISPENSING, drink_name)
+    def _send_next_dispense(self):
+        """Pops the first pending drink and sends its code to the bus."""
+        if not self.pending_dispenses:
+            self.active_nozzle_count = len([s for s in self.slot_status.values() if s[0] == DispenseStatus.DISPENSING])
+            if self.active_nozzle_count == 0:
+                self._all_dispenses_complete()
+            return
 
-        # Activate the appropriate output pin
-        if drink_name == "test_100_0":
-            gpio_drink_output_1.on()
-        elif drink_name == "test_50_50":
-            gpio_drink_output_2.on()
-        elif drink_name == "test_25_75":
-            gpio_drink_output_3.on()
-        elif drink_name == "martini":
-            gpio_drink_output_1.on()
-            gpio_drink_output_2.on()
-            gpio_drink_output_3.on()
-        # If the drink name is not one of these, you might want to handle it (maybe turn on nothing or all)
-        # For now we ignore others
+        nozzle, drink_name = self.pending_dispenses.pop(0)
+        self.current_dispensing_slot = nozzle
+        self.current_dispensing_drink = drink_name
 
-        # Start polling the feedback pin
+        # Get drink ID (3-bit)
+        drink_id =
+        set_output_bus(drink_id, nozzle)
+
+        # Start monitoring feedback
         self.dispense_timer.start(FEEDBACK_POLL_INTERVAL_MS)
         self.dispense_timeout_timer.start(DISPENSE_TIMEOUT_MS)
 
@@ -325,10 +371,8 @@ class MainWindow(QMainWindow):
         slot = self.current_dispensing_slot
         drink_name = self.current_dispensing_drink
 
-        # Turn off all output pins (just in case)
-        gpio_drink_output_1.off()
-        gpio_drink_output_2.off()
-        gpio_drink_output_3.off()
+        # Sets all pins to zero
+        clear_output_bus()
 
         # Re-enable the slot button and clear its selection
         self.main_screen.set_slot_enabled(slot, True)
