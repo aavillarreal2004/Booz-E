@@ -15,12 +15,13 @@ os.environ["GPIOZERO_PIN_FACTORY"] = "mock"
 
 # ===== Constants =====
 
-# Pins for sending dispense data from Rspberry Pi to Arduino
+# Pins and gpio for sending dispense data from Rspberry Pi to Arduino
 DRINK_OUTPUT_PINS = [0, 5, 6, 999, 999]
 gpio_output_pins = []
 for PIN_NUMBER in DRINK_OUTPUT_PINS:
     gpio_output_pins.append(gpiozero.OutputDevice(PIN_NUMBER))
 
+# Receives status of dispensation from Arduino
 DRINK_FEEDBACK_PIN = 21
 gpio_drink_feedback = gpiozero.InputDevice(DRINK_FEEDBACK_PIN)
 
