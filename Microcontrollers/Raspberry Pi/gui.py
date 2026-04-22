@@ -41,8 +41,9 @@ ICON_SIZE = QSize(160, 160)
 DISPENSE_BUTTON_SIZE = QSize(200, 60)
 MAX_COLS = 4
 SCROLL_ICON_SIZE = QSize(480, 280)
-DISPENSE_TIMEOUT_MS = 60000      # 60 seconds max to wait for feedback
+DISPENSE_TIMEOUT_MS = 30000      # 30 seconds max to wait for feedback
 FEEDBACK_POLL_INTERVAL_MS = 100  # check pin every 100 ms
+
 
 # ===== Enums =====
 class DispenseStatus(Enum):
@@ -50,6 +51,7 @@ class DispenseStatus(Enum):
     SELECTED = auto()
     DISPENSING = auto()
     DONE = auto()
+
 
 # ===== Data Class =====
 class DrinkData:
@@ -60,6 +62,7 @@ class DrinkData:
         self.index = index
         self.button = None
         self.selection_count = 0
+
 
 # ===== CSV Loader =====
 def load_drinks_from_csv(filename):
@@ -95,6 +98,7 @@ def set_output_bus(drink_id, nozzle_id):
     # Set strobe HIGH (first pin)
     gpio_output_bus[0].on()
 
+
 def clear_output_bus():
     # Turns off all output pins.
     for pin in gpio_output_bus:
@@ -106,7 +110,6 @@ def read_feedback_bus():
     if not gpio_input_bus[0].is_active:
         return -1  # no valid data
 
-    # Read 2 data pins (index 1 = Bit1, index 2 = Bit0)
     value = 0
     if gpio_input_bus[1].is_active:
         value += 2
@@ -160,7 +163,7 @@ class MainDrinkScreen(QWidget):
             button = QPushButton()
             button.setFixedSize(BUTTON_SIZE)
             button.setIconSize(ICON_SIZE)
-            button.clicked.connect(lambda checked, idx=i: self.slot_clicked.emit(idx))
+            button.clicked.connect(lambda checked, index=i: self.slot_clicked.emit(index))
             button.setIcon(QIcon("ui_images/logo_transparent_gray.png"))
             button_row.addWidget(button)
             self.slot_buttons.append(button)
@@ -169,10 +172,10 @@ class MainDrinkScreen(QWidget):
         dispense_row = QHBoxLayout()
         dispense_row.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Policy.Expanding,
                                                QSizePolicy.Policy.Minimum))
-        self.dispense_btn = QPushButton("Dispense")
-        self.dispense_btn.setFixedSize(DISPENSE_BUTTON_SIZE)
-        self.dispense_btn.clicked.connect(self.dispense_clicked.emit)
-        dispense_row.addWidget(self.dispense_btn)
+        self.dispense_button = QPushButton("Dispense")
+        self.dispense_button.setFixedSize(DISPENSE_BUTTON_SIZE)
+        self.dispense_button.clicked.connect(self.dispense_clicked.emit)
+        dispense_row.addWidget(self.dispense_button)
         dispense_row.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Policy.Expanding,
                                                QSizePolicy.Policy.Minimum))
         main_layout.addLayout(dispense_row)
@@ -187,7 +190,7 @@ class MainDrinkScreen(QWidget):
         self.slot_buttons[slot_index].setEnabled(enabled)
 
     def set_dispense_enabled(self, enabled):
-        self.dispense_btn.setEnabled(enabled)
+        self.dispense_button.setEnabled(enabled)
 
 
 # ===== Drink Selection Screen (scrollable grid) =====
@@ -257,16 +260,14 @@ class MainWindow(QMainWindow):
         # Feedback monitoring
         self.dispense_timer = QTimer()
         self.dispense_timer.timeout.connect(self._check_feedback)
-        self.dispense_timeout_timer = QTimer()
-        self.dispense_timeout_timer.setSingleShot(True)
-        self.dispense_timeout_timer.timeout.connect(self._on_dispense_timeout)
         self.current_dispensing_slot = -1   # -1 means none
         self.current_dispensing_drink = None
 
-        self.pending_dispenses = []  # List of (nozzle, drink_name)
-        self.dispense_step_timer = QTimer()
-        self.dispense_step_timer.setSingleShot(True)
-        self.dispense_step_timer.timeout.connect(self._send_next_dispense)
+        self.dispense_burst_timer = QTimer()
+        self.dispense_burst_timer.setInterval(500)
+        self.dispense_burst_timer.timeout.connect(self._send_burst_code)
+        self.burst_list = []
+        self.nozzle_timeouts = {}  # nozzle -> QTimer
 
         self.stacked = QStackedLayout()
         self._create_pages()
@@ -312,91 +313,113 @@ class MainWindow(QMainWindow):
         self.main_screen.set_slot_icon(self.current_slot, str(image_path))
         self.slot_status[self.current_slot] = (DispenseStatus.SELECTED, drink_name)
         self.stacked.setCurrentIndex(1)
+        self.main_screen.set_dispense_enabled(True)
 
     def on_dispense_clicked(self):
-        if self.current_dispensing_slot != -1:
-            return  # Already busy
-
-        self.pending_dispenses = []
+        # Collect all selected slots
+        burst_items = []
         for nozzle, (status, drink_name) in self.slot_status.items():
             if status == DispenseStatus.SELECTED:
-                self.pending_dispenses.append((nozzle, drink_name))
+                burst_items.append((nozzle, drink_name))
+                # Mark as DISPENSING immediately
                 self.slot_status[nozzle] = (DispenseStatus.DISPENSING, drink_name)
                 self.main_screen.set_slot_enabled(nozzle, False)
 
-        if not self.pending_dispenses:
+        if not burst_items:
             return
 
-        self.main_screen.set_dispense_enabled(False)
-        self._send_next_dispense()  # Start the chain
+        # Add to burst list (these will be sent one by one)
+        self.burst_list = burst_items
+        # Start the burst timer – first code sent immediately, then every 500ms
+        self._send_burst_code()  # send first one now
+        self.dispense_burst_timer.start()  # subsequent ones every 500ms
 
-    def _send_next_dispense(self):
-        """Pops the first pending drink and sends its code to the bus."""
-        if not self.pending_dispenses:
-            self.active_nozzle_count = len([s for s in self.slot_status.values() if s[0] == DispenseStatus.DISPENSING])
-            if self.active_nozzle_count == 0:
-                self._all_dispenses_complete()
+    def _send_burst_code(self):
+        if not self.burst_list:
+            self.dispense_burst_timer.stop()
+            self._start_feedback_monitoring()
             return
 
-        nozzle, drink_name = self.pending_dispenses.pop(0)
-        self.current_dispensing_slot = nozzle
-        self.current_dispensing_drink = drink_name
+        nozzle, drink_name = self.burst_list.pop(0)
 
-        # Get drink ID (3-bit)
-        drink_id =
+        drink_data = self.drinks.get(drink_name)
+        drink_id = drink_data.index if drink_data else 0
+
         set_output_bus(drink_id, nozzle)
 
-        # Start monitoring feedback
-        self.dispense_timer.start(FEEDBACK_POLL_INTERVAL_MS)
-        self.dispense_timeout_timer.start(DISPENSE_TIMEOUT_MS)
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda n=nozzle: self._on_nozzle_timeout(n))
+        timer.start(DISPENSE_TIMEOUT_MS)
+        self.nozzle_timeouts[nozzle] = timer
 
-    def _check_feedback(self):
-        """Called periodically to see if the drink has been dispensed."""
-        if gpio_drink_feedback.is_active:
-            self._finish_dispensing(success=True)
+    def _on_nozzle_timeout(self, nozzle):
+        """Called when one specific nozzle does not finish in time."""
+        # Clean up timer
+        if nozzle in self.nozzle_timeouts:
+            self.nozzle_timeouts[nozzle].stop()
+            del self.nozzle_timeouts[nozzle]
 
-    def _on_dispense_timeout(self):
-        """Called if feedback is not received within the timeout."""
-        self._finish_dispensing(success=False)
-
-    def _finish_dispensing(self, success):
-        """Clean up after dispensing is done (success or timeout)."""
-        # Stop timers
-        self.dispense_timer.stop()
-        self.dispense_timeout_timer.stop()
-
-        if self.current_dispensing_slot == -1:
+        # Only act if still marked as DISPENSING
+        status, drink = self.slot_status.get(nozzle, (None, None))
+        if status != DispenseStatus.DISPENSING:
             return
 
-        slot = self.current_dispensing_slot
-        drink_name = self.current_dispensing_drink
+        # Mark as failed (DONE with error)
+        self.slot_status[nozzle] = (DispenseStatus.DONE, None)
+        self.main_screen.set_slot_enabled(nozzle, True)
+        self.main_screen.set_slot_icon(nozzle, "ui_images/logo_transparent_gray.png")
 
-        # Sets all pins to zero
-        clear_output_bus()
+        QMessageBox.warning(self, "Dispense Timeout",
+                            f"Nozzle {nozzle + 1} did not finish in time.")
 
-        # Re-enable the slot button and clear its selection
-        self.main_screen.set_slot_enabled(slot, True)
-        self.main_screen.set_dispense_enabled(True)
-
-        # Reset status
-        self.slot_status[slot] = (DispenseStatus.NO_DRINK, None)
-        # Reset icon to default
-        self.main_screen.set_slot_icon(slot, "ui_images/logo_transparent_gray.png")
-
-        # Clear current dispensing info
-        self.current_dispensing_slot = -1
-        self.current_dispensing_drink = None
-
-        # Optionally, you could show a message box if not success
-        if not success:
-            QMessageBox.warning(self, "Dispense Timeout",
-                                f"Dispense for {drink_name} timed out.\nPlease check the hardware.")
+        # Check if all nozzles are done
+        active = [n for n, (s, _) in self.slot_status.items() if s == DispenseStatus.DISPENSING]
+        if not active:
+            self._all_dispenses_complete()
 
     def on_deselect_clicked(self):
         image_path = "ui_images/logo_transparent_gray.png"
         self.slot_status[self.current_slot] = (DispenseStatus.NO_DRINK, None)
         self.main_screen.set_slot_icon(self.current_slot, image_path)
         self.stacked.setCurrentIndex(1)
+
+    def _start_feedback_monitoring(self):
+        clear_output_bus()
+        self.dispense_timer.start(FEEDBACK_POLL_INTERVAL_MS)
+        self.active_nozzles = [n for n, (s, _) in self.slot_status.items() if s == DispenseStatus.DISPENSING]
+
+    def _check_feedback(self):
+        finished_nozzle = read_feedback_bus()
+        if finished_nozzle == -1:
+            return
+
+        status, drink = self.slot_status.get(finished_nozzle, (None, None))
+        if status != DispenseStatus.DISPENSING:
+            return
+
+        # Cancel this nozzle's timeout timer
+        if finished_nozzle in self.nozzle_timeouts:
+            self.nozzle_timeouts[finished_nozzle].stop()
+            del self.nozzle_timeouts[finished_nozzle]
+
+        self.slot_status[finished_nozzle] = (DispenseStatus.DONE, drink)
+        self.main_screen.set_slot_enabled(finished_nozzle, True)
+        self.main_screen.set_slot_icon(finished_nozzle, "ui_images/logo_transparent_gray.png")
+
+        active = [n for n, (s, _) in self.slot_status.items() if s == DispenseStatus.DISPENSING]
+        if not active:
+            self._all_dispenses_complete()
+
+    def _all_dispenses_complete(self):
+        self.dispense_timer.stop()
+        for timer in self.nozzle_timeouts.values():
+            timer.stop()
+        self.nozzle_timeouts.clear()
+        clear_output_bus()
+        self.main_screen.set_dispense_enabled(True)
+        self.current_dispensing_slot = -1
+        self.current_dispensing_drink = None
 
 
 # ===== Application Entry Point =====
